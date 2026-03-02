@@ -678,10 +678,10 @@
 
                 const data = await response.json();
 
-                // 格式化响应
-                const formattedResponse = formatMarkdown(data.context);
+                // 使用 LLM 生成的答案
+                const formattedResponse = formatMarkdown(data.answer);
 
-                renderChatMessage(null, formattedResponse);
+                renderChatMessage(question, formattedResponse);
                 showToast('回答已生成', 'success');
 
             } catch (error) {
