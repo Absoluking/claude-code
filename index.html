@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能文件上传与问答系统</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            display: flex;
+            height: 90vh;
+        }
+
+        /* 左侧边栏 - 文件上传 */
+        .sidebar {
+            width: 350px;
+            background: #f8f9fa;
+            padding: 30px;
+            border-right: 1px solid #e9ecef;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .sidebar h2 {
+            color: #333;
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        /* 上传区域 */
+        .upload-area {
+            border: 2px dashed #667eea;
+            border-radius: 12px;
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: white;
+        }
+
+        .upload-area:hover,
+        .upload-area.drag-over {
+            border-color: #764ba2;
+            background: #f0f4ff;
+        }
+
+        .upload-area.drag-over {
+            transform: scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .upload-area p {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .upload-area .hint {
+            color: #999;
+            font-size: 12px;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        /* 上传列表 */
+        .upload-list {
+            flex: 1;
+            overflow-y: auto;
+            border-top: 1px solid #dee2e6;
+            padding-top: 20px;
+        }
+
+        .upload-list h3 {
+            color: #555;
+            font-size: 16px;
+            margin-bottom: 15px;
+        }
+
+        .file-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .file-icon {
+            font-size: 24px;
+        }
+
+        .file-info {
+            flex: 1;
+        }
+
+        .file-name {
+            color: #333;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 3px;
+        }
+
+        .file-status {
+            font-size: 12px;
+            color: #28a745;
+        }
+
+        .file-status.uploading {
+            color: #ffc107;
+        }
+
+        .file-status.error {
+            color: #dc3545;
+        }
+
+        .remove-btn {
+            background: none;
+            border: none;
+            color: #dc3545;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 5px;
+        }
+
+        .remove-btn:hover {
+            color: #c82333;
+        }
+
+        /* 右侧 - 聊天界面 */
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: white;
+        }
+
+        .chat-header {
+            padding: 20px 30px;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .chat-header h2 {
+            color: #333;
+            font-size: 22px;
+        }
+
+        .chat-header .badge {
+            background: #667eea;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            background: #fafafa;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 15px 20px;
+            border-radius: 12px;
+            font-size: 15px;
+            line-height: 1.6;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.system {
+            align-self: flex-start;
+            background: white;
+            border: 1px solid #e9ecef;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message-content {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .message-content pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin-top: 10px;
+        }
+
+        .message-content code {
+            background: #f8f9fa;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-family: "Courier New", monospace;
+            font-size: 13px;
+        }
+
+        .message-title {
+            font-weight: 600;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+
+        .user-name {
+            font-size: 12px;
+            opacity: 0.7;
+            margin-bottom: 8px;
+        }
+
+        .system-name {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        /* 输入区域 */
+        .input-area {
+            padding: 20px 30px;
+            border-top: 1px solid #e9ecef;
+            background: white;
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 15px;
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            font-size: 15px;
+            resize: none;
+            height: 50px;
+            max-height: 150px;
+            font-family: inherit;
+        }
+
+        .chat-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .send-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            height: 50px;
+            min-width: 100px;
+        }
+
+        .send-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .send-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        /* 提示消息 */
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            animation: slideIn 0.3s ease;
+            z-index: 1000;
+        }
+
+        .toast.success {
+            background: #28a745;
+        }
+
+        .toast.error {
+            background: #dc3545;
+        }
+
+        .toast.info {
+            background: #667eea;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(100px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        /* 加载动画 */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #fff;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+                height: 100vh;
+            }
+
+            .sidebar {
+                width: 100%;
+                max-height: 40%;
+                border-right: none;
+                border-bottom: 1px solid #e9ecef;
+            }
+
+            .chat-container {
+                flex: 1;
+            }
+
+            .message {
+                max-width: 90%;
+            }
+        }
+
+        /* 空状态 */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #999;
+            text-align: center;
+        }
+
+        .empty-state .icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            color: #667eea;
+        }
+
+        .empty-state p {
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 左侧边栏 - 文件上传 -->
+        <div class="sidebar">
+            <h2>📂 文件上传</h2>
+
+            <!-- 上传区域 -->
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">☁️</div>
+                <p>点击或拖拽文件到此处</p>
+                <p class="hint">支持 .txt, .md, .pdf 文件</p>
+                <input type="file" id="fileInput" accept=".txt,.md,.pdf">
+            </div>
+
+            <!-- 上传列表 -->
+            <div class="upload-list">
+                <h3>已上传文件</h3>
+                <div id="uploadList">
+                    <!-- 上传的文件将显示在这里 -->
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧 - 聊天界面 -->
+        <div class="chat-container">
+            <div class="chat-header">
+                <h2>💬 智能问答</h2>
+                <span class="badge" id="docCount">文档: 0</span>
+            </div>
+
+            <!-- 聊天消息区域 -->
+            <div class="chat-messages" id="chatMessages">
+                <div class="empty-state">
+                    <div class="icon">🤖</div>
+                    <p>请先上传文件，然后开始提问</p>
+                </div>
+            </div>
+
+            <!-- 输入区域 -->
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <textarea
+                        class="chat-input"
+                        id="chatInput"
+                        placeholder="输入您的问题..."
+                        rows="1"
+                    ></textarea>
+                    <button class="send-btn" id="sendBtn">
+                        <span id="btnText">发送</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 容器 -->
+    <div id="toastContainer"></div>
+
+    <script>
+        // 配置
+        const API_BASE = 'http://localhost:8000';
+
+        // 状态
+        let uploadedFiles = [];
+
+        // DOM 元素
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const uploadList = document.getElementById('uploadList');
+        const chatMessages = document.getElementById('chatMessages');
+        const chatInput = document.getElementById('chatInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const btnText = document.getElementById('btnText');
+        const docCount = document.getElementById('docCount');
+        const toastContainer = document.getElementById('toastContainer');
+
+        // 文件图标映射
+        const fileIcons = {
+            '.txt': '📄',
+            '.md': '📝',
+            '.pdf': '📕'
+        };
+
+        // 显示提示消息
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            toastContainer.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(100px)';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // 格式化日期
+        function formatDate(date) {
+            return new Date(date).toLocaleString('zh-CN');
+        }
+
+        // 创建消息元素
+        function createMessageElement(content, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+
+            if (type === 'user') {
+                messageDiv.innerHTML = `
+                    <div class="user-name">👤 我</div>
+                    <div class="message-content">${escapeHtml(content)}</div>
+                `;
+            } else {
+                messageDiv.innerHTML = `
+                    <div class="system-name">🤖 AI 助手</div>
+                    <div class="message-content">${content}</div>
+                `;
+            }
+
+            return messageDiv;
+        }
+
+        // HTML 转义
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 格式化 Markdown（简单的 Markdown 解析）
+        function formatMarkdown(text) {
+            // 代码块
+            text = text.replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+            // 行内代码
+            text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+            // 粗体
+            text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            // 斜体
+            text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+            // 标题
+            text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+            text = text.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+            text = text.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+            // 换行
+            text = text.replace(/\n/g, '<br>');
+            // 引用
+            text = text.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
+
+            return text;
+        }
+
+        // 渲染聊天消息
+        function renderChatMessage(question, response) {
+            // 如果是系统消息
+            if (response) {
+                chatMessages.appendChild(createMessageElement(response, 'system'));
+            }
+            // 如果是用户消息
+            if (question) {
+                chatMessages.appendChild(createMessageElement(question, 'user'));
+            }
+
+            // 滚动到底部
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // 更新文档计数
+        function updateDocCount(count) {
+            docCount.textContent = `文档: ${count}`;
+        }
+
+        // 上传文件
+        async function uploadFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            showToast('正在上传文件...', 'info');
+
+            try {
+                const response = await fetch(`${API_BASE}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    uploadedFiles.push({
+                        file: file,
+                        name: data.filename,
+                        chunks: data.chunks_count,
+                        uploadedAt: new Date()
+                    });
+
+                    showToast(`文件 "${file.name}" 上传成功！`, 'success');
+                    updateUploadList();
+                    updateDocCount(uploadedFiles.length);
+                    renderChatMessage(`我上传了文件：${file.name} (${data.chunks_count} 个文本块)`);
+                } else {
+                    showToast(`上传失败: ${data.detail}`, 'error');
+                }
+            } catch (error) {
+                showToast(`上传错误: ${error.message}`, 'error');
+            }
+        }
+
+        // 渲染上传列表
+        function updateUploadList() {
+            if (uploadedFiles.length === 0) {
+                uploadList.innerHTML = '<p style="color: #999; text-align: center; padding: 20px;">暂无文件</p>';
+                return;
+            }
+
+            uploadList.innerHTML = uploadedFiles.map((item, index) => `
+                <div class="file-item">
+                    <span class="file-icon">${fileIcons[item.file.name.split('.').pop().toLowerCase()]}</span>
+                    <div class="file-info">
+                        <div class="file-name">${escapeHtml(item.name)}</div>
+                        <div class="file-status">✓ 已上传 (${item.chunks} 个文本块)</div>
+                    </div>
+                    <button class="remove-btn" onclick="removeFile(${index})">×</button>
+                </div>
+            `).join('');
+        }
+
+        // 移除文件
+        function removeFile(index) {
+            uploadedFiles.splice(index, 1);
+            updateUploadList();
+            updateDocCount(uploadedFiles.length);
+            showToast('文件已移除', 'info');
+        }
+
+        // 询问问题
+        async function askQuestion(question) {
+            if (!question.trim()) return;
+
+            // 禁用输入
+            chatInput.disabled = true;
+            sendBtn.disabled = true;
+            btnText.innerHTML = '<span class="loading"></span>';
+
+            // 显示用户问题
+            renderChatMessage(question);
+
+            try {
+                const response = await fetch(`${API_BASE}/ask?question=${encodeURIComponent(question)}`, {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    throw new Error('请求失败');
+                }
+
+                const data = await response.json();
+
+                // 格式化响应
+                const formattedResponse = formatMarkdown(data.context);
+
+                renderChatMessage(null, formattedResponse);
+                showToast('回答已生成', 'success');
+
+            } catch (error) {
+                showToast(`请求错误: ${error.message}`, 'error');
+                renderChatMessage(null, `❌ 请求失败: ${error.message}\n\n请确保服务器正在运行。`);
+            } finally {
+                // 恢复输入
+                chatInput.disabled = false;
+                sendBtn.disabled = false;
+                btnText.textContent = '发送';
+                chatInput.focus();
+            }
+        }
+
+        // 事件监听 - 上传区域
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                for (const file of e.target.files) {
+                    uploadFile(file);
+                }
+                fileInput.value = '';
+            }
+        });
+
+        // 拖拽事件
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('drag-over');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('drag-over');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+
+            if (e.dataTransfer.files.length > 0) {
+                for (const file of e.dataTransfer.files) {
+                    uploadFile(file);
+                }
+            }
+        });
+
+        // 发送按钮点击
+        sendBtn.addEventListener('click', () => {
+            const question = chatInput.value.trim();
+            if (question) {
+                askQuestion(question);
+                chatInput.value = '';
+            }
+        });
+
+        // 回车发送（Shift+Enter 换行）
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendBtn.click();
+            }
+        });
+
+        // 自动调整输入框高度
+        chatInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+        });
+
+        // 初始化 - 检查服务器状态
+        async function checkServerStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                if (response.ok) {
+                    const data = await response.json();
+                    updateDocCount(data.documents_in_store);
+                }
+            } catch (error) {
+                console.log('无法连接到服务器');
+            }
+        }
+
+        // 页面加载完成后检查状态
+        window.addEventListener('load', checkServerStatus);
+
+        // 定期检查服务器状态（每30秒）
+        setInterval(checkServerStatus, 30000);
+    </script>
+</body>
+</html>
