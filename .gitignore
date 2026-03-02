@@ -1,0 +1,23 @@
+# Uploads
+uploads/
+
+# Test files
+test_file.txt
+large_test.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+
+# Model cache
+.cache/
