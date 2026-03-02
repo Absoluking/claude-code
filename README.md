@@ -63,7 +63,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 }
 ```
 
-### 语义搜索
+### LLM 智能问答
 
 **接口**: `POST /ask`
 
@@ -73,9 +73,15 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```json
 {
   "question": "你的问题",
-  "context": "### Reference 1\n\n最相关的文本块内容...\n\n---\n\n### Reference 2\n\n第二相关的文本块内容...\n\n---\n\n### Reference 3\n\n第三相关的文本块内容..."
+  "answer": "根据提供的上下文信息，这里是准确的答案...",
+  "model": "glm-4.7-flash"
 }
 ```
+
+**工作流程**:
+1. 向量检索：从上传的文件中检索最相关的 3 个文本块
+2. 提示词构建：将检索结果和用户问题组合成 RAG 提示词
+3. LLM 生成：调用 LLM 根据上下文生成自然语言答案
 
 ### 健康检查
 
@@ -86,8 +92,69 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 {
   "status": "healthy",
   "collections": 1,
-  "documents_in_store": 3
+  "documents_in_store": 3,
+  "llm_available": true,
+  "llm_model": "glm-4.7-flash",
+  "llm_base_url": "http://127.0.0.1:8000/v1"
 }
+```
+
+## LLM 配置
+
+本项目使用 OpenAI 兼容的 API 接口调用本地 LLM 服务。通过环境变量配置：
+
+### 环境变量
+
+```bash
+# LLM 服务地址（必需）
+ANTHROPIC_BASE_URL=http://127.0.0.1:8000/v1
+
+# 认证令牌（必需）
+ANTHROPIC_AUTH_TOKEN=your-auth-token-here
+
+# 模型名称（必需，默认：glm-4.7-flash）
+ANTHROPIC_MODEL=glm-4.7-flash
+```
+
+### 配置示例
+
+**Windows (CMD)**:
+```cmd
+set ANTHROPIC_BASE_URL=http://127.0.0.1:8000/v1
+set ANTHROPIC_AUTH_TOKEN=test-token-123
+set ANTHROPIC_MODEL=glm-4.7-flash
+python main.py
+```
+
+**Windows (PowerShell)**:
+```powershell
+$env:ANTHROPIC_BASE_URL="http://127.0.0.1:8000/v1"
+$env:ANTHROPIC_AUTH_TOKEN="test-token-123"
+$env:ANTHROPIC_MODEL="glm-4.7-flash"
+python main.py
+```
+
+**Linux/Mac**:
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8000/v1
+export ANTHROPIC_AUTH_TOKEN=test-token-123
+export ANTHROPIC_MODEL=glm-4.7-flash
+python main.py
+```
+
+### 配置文件 (.env)
+
+创建 `.env` 文件（可选）：
+```env
+ANTHROPIC_BASE_URL=http://127.0.0.1:8000/v1
+ANTHROPIC_AUTH_TOKEN=test-token-123
+ANTHROPIC_MODEL=glm-4.7-flash
+```
+
+然后在代码中加载：
+```python
+from dotenv import load_dotenv
+load_dotenv()
 ```
 
 ## 测试上传

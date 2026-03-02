@@ -8,11 +8,27 @@ from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 import numpy as np
 from typing import List, Dict, Any
+from openai import OpenAI
 
 app = FastAPI(title="File Upload API", version="1.0.0")
 
 # 初始化嵌入模型
 embedding_model = SentenceTransformer('BAAI/bge-small-zh-v1.5')
+
+# 初始化 OpenAI 客户端（用于调用 LLM）
+anthropic_base_url = os.getenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:8000/v1")
+anthropic_auth_token = os.getenv("ANTHROPIC_AUTH_TOKEN", "test-token-123")
+anthropic_model = os.getenv("ANTHROPIC_MODEL", "glm-4.7-flash")
+
+try:
+    llm_client = OpenAI(
+        api_key=anthropic_auth_token,
+        base_url=anthropic_base_url
+    )
+    LLM_AVAILABLE = True
+except Exception as e:
+    print(f"Warning: Failed to initialize LLM client: {str(e)}")
+    LLM_AVAILABLE = False
 
 # 自定义内存向量存储
 class MemoryVectorStore:
@@ -77,18 +93,25 @@ async def health():
     健康检查端点
 
     Returns:
-        服务状态和向量存储状态
+        服务状态、向量存储状态和 LLM 状态
     """
     try:
         # 检查向量存储状态
         status = "healthy"
         docs_count = len(vector_store.documents)
 
-        return {
+        health_info = {
             "status": status,
             "collections": 1,  # 模拟值，因为使用自定义存储
-            "documents_in_store": docs_count
+            "documents_in_store": docs_count,
+            "llm_available": LLM_AVAILABLE
         }
+
+        if LLM_AVAILABLE:
+            health_info["llm_model"] = anthropic_model
+            health_info["llm_base_url"] = anthropic_base_url
+
+        return health_info
     except Exception as e:
         return {
             "status": "unhealthy",
@@ -220,11 +243,11 @@ def extract_text_from_pdf(pdf_path: Path) -> str:
 @app.post("/ask")
 async def ask_question(question: str):
     """
-    基于向量检索回答问题
+    基于向量检索和 LLM 生成答案
 
     - **question**: 用户问题
 
-    该端点使用语义检索从已上传的文件中找到最相关的上下文，并返回 Markdown 格式的结果。
+    该端点使用语义检索从已上传的文件中找到最相关的上下文，然后调用 LLM 生成自然语言答案。
     """
     try:
         # 1. 验证输入
@@ -234,30 +257,75 @@ async def ask_question(question: str):
                 detail="Question cannot be empty"
             )
 
-        # 2. 将问题向量化
+        # 2. 检查 LLM 是否可用
+        if not LLM_AVAILABLE:
+            raise HTTPException(
+                status_code=503,
+                detail="LLM service is not available. Please check ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN environment variables."
+            )
+
+        # 3. 将问题向量化
         query_embedding = embedding_model.encode(question).tolist()
 
-        # 3. 在向量存储中查询最相关的 3 个文本块
+        # 4. 在向量存储中查询最相关的 3 个文本块
         results = vector_store.query(query_embedding=query_embedding, n_results=3)
 
-        # 4. 检查是否有结果
+        # 5. 检查是否有结果
         if not results['documents'] or not results['documents'][0]:
             raise HTTPException(
                 status_code=404,
                 detail="No documents found in the vector store. Please upload a file first."
             )
 
-        # 5. 格式化为 Markdown 返回
+        # 6. 构建提示词（RAG 提示词）
         context_parts = []
         for i, doc in enumerate(results['documents'][0], 1):
-            context_parts.append(f"### Reference {i}\n\n{doc}\n")
+            context_parts.append(f"Reference {i}:\n{doc}\n")
 
         context_text = "\n---\n\n".join(context_parts)
 
-        return {
-            "question": question,
-            "context": context_text
-        }
+        prompt = f"""你是一个智能问答助手。请基于以下上下文信息回答用户的问题。
+
+上下文信息：
+{context_text}
+
+用户问题：{question}
+
+请根据上下文信息给出准确、简洁的答案。如果上下文中没有相关信息，请明确说明。"""
+
+        # 7. 调用 LLM 生成答案
+        try:
+            response = llm_client.chat.completions.create(
+                model=anthropic_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是一个专业的智能问答助手，能够基于提供的上下文信息准确回答问题。"
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.7,
+                max_tokens=1024,
+                stream=False
+            )
+
+            # 8. 提取答案
+            answer = response.choices[0].message.content
+
+            return {
+                "question": question,
+                "answer": answer,
+                "model": anthropic_model
+            }
+
+        except Exception as llm_error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"LLM API call failed: {str(llm_error)}"
+            )
 
     except HTTPException:
         raise
