@@ -12,6 +12,18 @@ from typing import List, Dict, Any, Optional
 from openai import OpenAI
 import uuid
 
+# 加载 .env 文件
+from dotenv import load_dotenv
+load_dotenv()
+
+# 打印配置信息
+print("=" * 60)
+print("Configuration:")
+print(f"  ANTHROPIC_BASE_URL: {os.getenv('ANTHROPIC_BASE_URL')}")
+print(f"  ANTHROPIC_AUTH_TOKEN: {os.getenv('ANTHROPIC_AUTH_TOKEN', 'NOT SET')[:20]}...")
+print(f"  ANTHROPIC_MODEL: {os.getenv('ANTHROPIC_MODEL')}")
+print("=" * 60)
+
 app = FastAPI(title="File Upload API", version="2.0.0")
 
 # 初始化嵌入模型
@@ -20,19 +32,40 @@ embedding_model = SentenceTransformer('BAAI/bge-small-zh-v1.5')
 print(f"Embedding model loaded. Embedding dimension: {embedding_model.get_sentence_embedding_dimension()}")
 
 # 初始化 OpenAI 客户端（用于调用 LLM）
-anthropic_base_url = os.getenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:8000/v1")
-anthropic_auth_token = os.getenv("ANTHROPIC_AUTH_TOKEN", "test-token-123")
-anthropic_model = os.getenv("ANTHROPIC_MODEL", "glm-4.7-flash")
+# 使用正确的智谱 AI API 配置
+anthropic_base_url = "https://open.bigmodel.cn/api/paas/v4"
+anthropic_auth_token = "61965768265f46f581a45aa9d91be121.BBmentHLsM1rwjdL"
+anthropic_model = "glm-4-flash"
 
 try:
+    print(f"Initializing LLM client with:")
+    print(f"  Base URL: {anthropic_base_url}")
+    print(f"  Model: {anthropic_model}")
+    print(f"  API Key: {anthropic_auth_token[:20]}...")
+
     llm_client = OpenAI(
         api_key=anthropic_auth_token,
         base_url=anthropic_base_url
     )
-    LLM_AVAILABLE = True
-    print("LLM client initialized successfully")
+
+    # 测试 API 连接
+    test_response = llm_client.chat.completions.create(
+        model=anthropic_model,
+        messages=[{"role": "user", "content": "test"}],
+        max_tokens=5
+    )
+
+    if test_response.choices and test_response.choices[0].message:
+        LLM_AVAILABLE = True
+        print("LLM client initialized successfully and API connection verified")
+    else:
+        LLM_AVAILABLE = False
+        print("LLM client initialized but API connection test failed")
+
 except Exception as e:
     print(f"Warning: Failed to initialize LLM client: {str(e)}")
+    import traceback
+    traceback.print_exc()
     LLM_AVAILABLE = False
 
 # 初始化 ChromaDB 客户端
@@ -313,6 +346,9 @@ IMPORTANT: 返回纯文本结果，不要使用任何 Markdown 格式（如 #, #
 
         # 8. 调用 LLM 生成答案
         try:
+            print(f"Calling LLM with model: {anthropic_model}")
+            print(f"Prompt length: {len(prompt)} characters")
+
             response = llm_client.chat.completions.create(
                 model=anthropic_model,
                 messages=[
@@ -330,14 +366,33 @@ IMPORTANT: 返回纯文本结果，不要使用任何 Markdown 格式（如 #, #
                 stream=False
             )
 
+            print(f"LLM response type: {type(response)}")
+            print(f"LLM response: {response}")
+
             # 9. 提取答案
-            if not response.choices or not response.choices[0].message or not response.choices[0].message.content:
+            if not response.choices:
                 raise HTTPException(
                     status_code=500,
-                    detail="LLM response is empty or malformed"
+                    detail=f"LLM response is empty or malformed - no choices in response"
                 )
 
-            answer = response.choices[0].message.content
+            choice = response.choices[0]
+            print(f"First choice: {choice}")
+
+            if not choice.message:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"LLM response is empty or malformed - no message in choice"
+                )
+
+            if not choice.message.content:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"LLM response content is empty"
+                )
+
+            answer = choice.message.content
+            print(f"Answer length: {len(answer)} characters")
 
             return {
                 "question": question,
@@ -348,6 +403,9 @@ IMPORTANT: 返回纯文本结果，不要使用任何 Markdown 格式（如 #, #
             }
 
         except Exception as llm_error:
+            print(f"LLM Error: {str(llm_error)}")
+            import traceback
+            traceback.print_exc()
             raise HTTPException(
                 status_code=500,
                 detail=f"LLM API call failed: {str(llm_error)}"
