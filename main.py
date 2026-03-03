@@ -1,19 +1,23 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Body
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 import os
 import shutil
 from pathlib import Path
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
-import numpy as np
-from typing import List, Dict, Any
+import chromadb
+from chromadb.config import Settings
+from typing import List, Dict, Any, Optional
 from openai import OpenAI
+import uuid
 
-app = FastAPI(title="File Upload API", version="1.0.0")
+app = FastAPI(title="File Upload API", version="2.0.0")
 
 # 初始化嵌入模型
+print("Loading embedding model: BAAI/bge-small-zh-v1.5")
 embedding_model = SentenceTransformer('BAAI/bge-small-zh-v1.5')
+print(f"Embedding model loaded. Embedding dimension: {embedding_model.get_sentence_embedding_dimension()}")
 
 # 初始化 OpenAI 客户端（用于调用 LLM）
 anthropic_base_url = os.getenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:8000/v1")
@@ -26,49 +30,26 @@ try:
         base_url=anthropic_base_url
     )
     LLM_AVAILABLE = True
+    print("LLM client initialized successfully")
 except Exception as e:
     print(f"Warning: Failed to initialize LLM client: {str(e)}")
     LLM_AVAILABLE = False
 
-# 自定义内存向量存储
-class MemoryVectorStore:
-    def __init__(self):
-        self.documents = []
-        self.embeddings = []
-        self.metadatas = []
+# 初始化 ChromaDB 客户端
+CHROMA_DB_PATH = Path(__file__).parent / "chroma_db"
+CHROMA_DB_PATH.mkdir(exist_ok=True)
 
-    def add(self, documents: List[str], embeddings: List[List[float]], metadatas: List[Dict[str, Any]]):
-        """添加文档到向量存储"""
-        self.documents.extend(documents)
-        self.embeddings.extend(embeddings)
-        self.metadatas.extend(metadatas)
+print(f"Initializing ChromaDB at: {CHROMA_DB_PATH}")
+chroma_client = chromadb.PersistentClient(
+    path=str(CHROMA_DB_PATH),
+    settings=Settings(anonymized_telemetry=False)
+)
 
-    def query(self, query_embedding: List[float], n_results: int = 3) -> Dict[str, List[List[str]]]:
-        """执行语义搜索"""
-        if not self.embeddings:
-            return {"documents": [], "metadatas": [], "distances": [], "ids": []}
+# 获取或创建向量存储集合
+collection_name = "document_chunks"
+vector_store = chroma_client.get_or_create_collection(name=collection_name)
 
-        # 计算余弦相似度
-        query_array = np.array([query_embedding])
-        doc_array = np.array(self.embeddings)
-
-        # 计算点积（对于已归一化的向量，点积等于余弦相似度）
-        dot_products = np.dot(doc_array, query_array[0])
-
-        # 获取最相似的结果
-        top_indices = np.argsort(dot_products)[-n_results:][::-1]
-
-        results = {
-            "documents": [self.documents[i] for i in top_indices],
-            "metadatas": [self.metadatas[i] for i in top_indices],
-            "distances": [1 - dot_products[i] for i in top_indices],  # 转换为距离
-            "ids": [str(i) for i in top_indices]
-        }
-
-        return results
-
-# 初始化内存向量存储
-vector_store = MemoryVectorStore()
+print(f"ChromaDB collection '{collection_name}' initialized")
 
 # 确保上传目录存在
 UPLOAD_DIR = Path(__file__).parent / "uploads"
@@ -98,13 +79,15 @@ async def health():
     try:
         # 检查向量存储状态
         status = "healthy"
-        docs_count = len(vector_store.documents)
+        docs_count = vector_store.count()
 
         health_info = {
             "status": status,
-            "collections": 1,  # 模拟值，因为使用自定义存储
+            "collections": collection_name,
             "documents_in_store": docs_count,
-            "llm_available": LLM_AVAILABLE
+            "llm_available": LLM_AVAILABLE,
+            "embedding_model": "BAAI/bge-small-zh-v1.5",
+            "embedding_dimension": embedding_model.get_sentence_embedding_dimension()
         }
 
         if LLM_AVAILABLE:
@@ -193,12 +176,32 @@ async def upload_file(file: UploadFile = File(...)):
         if text_content:
             chunks = chunk_text(text_content)
             try:
+                # 为每个文本块生成向量
                 vectors = embedding_model.encode(chunks).tolist()
+
+                # 准备添加到 ChromaDB 的数据
+                ids = [str(uuid.uuid4()) for _ in range(len(chunks))]
+                metadatas = [
+                    {
+                        "source": filename,
+                        "chunk_index": idx,
+                        "total_chunks": len(chunks),
+                        "chunk_size": len(chunk)
+                    }
+                    for idx, chunk in enumerate(chunks)
+                ]
+                documents = chunks
+
+                # 批量添加到 ChromaDB
                 vector_store.add(
-                    documents=chunks,
+                    ids=ids,
                     embeddings=vectors,
-                    metadatas=[{"source": filename, "chunk_index": idx} for idx in range(len(chunks))]
+                    metadatas=metadatas,
+                    documents=documents
                 )
+
+                print(f"Added {len(chunks)} chunks to ChromaDB for file: {filename}")
+
             except Exception as e:
                 # 向量存储失败不影响文件上传，只记录警告
                 print(f"Warning: Failed to create vector index: {str(e)}")
@@ -240,8 +243,8 @@ def extract_text_from_pdf(pdf_path: Path) -> str:
         )
 
 
-@app.post("/ask")
-async def ask_question(question: str):
+@app.post("/ask", response_model=Dict[str, Any])
+async def ask_question(question: str = Body(..., embed=True, description="用户问题")):
     """
     基于向量检索和 LLM 生成答案
 
@@ -257,27 +260,41 @@ async def ask_question(question: str):
                 detail="Question cannot be empty"
             )
 
-        # 2. 检查 LLM 是否可用
-        if not LLM_AVAILABLE:
+        # 2. 检查 ChromaDB 中是否有数据
+        docs_count = vector_store.count()
+        if docs_count == 0:
             raise HTTPException(
-                status_code=503,
-                detail="LLM service is not available. Please check ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN environment variables."
+                status_code=404,
+                detail="No documents found in the vector store. Please upload a file first using /upload endpoint."
             )
 
-        # 3. 将问题向量化
+        # 3. 检查 LLM 是否可用
+        if not LLM_AVAILABLE:
+            # 如果 LLM 不可用，只返回检索到的上下文
+            return {
+                "question": question,
+                "note": "LLM is not available, returning only retrieved context",
+                "query_embedding": True,
+                "results": []
+            }
+
+        # 4. 将问题向量化
         query_embedding = embedding_model.encode(question).tolist()
 
-        # 4. 在向量存储中查询最相关的 3 个文本块
-        results = vector_store.query(query_embedding=query_embedding, n_results=3)
+        # 5. 在 ChromaDB 中查询最相关的 3 个文本块
+        results = vector_store.query(
+            query_embeddings=[query_embedding],
+            n_results=3
+        )
 
-        # 5. 检查是否有结果
+        # 6. 检查是否有结果
         if not results['documents'] or not results['documents'][0]:
             raise HTTPException(
                 status_code=404,
-                detail="No documents found in the vector store. Please upload a file first."
+                detail="No relevant documents found in the vector store."
             )
 
-        # 6. 构建提示词（RAG 提示词）
+        # 7. 构建提示词（RAG 提示词）
         context_parts = []
         for i, doc in enumerate(results['documents'][0], 1):
             context_parts.append(f"Reference {i}:\n{doc}\n")
@@ -294,7 +311,7 @@ async def ask_question(question: str):
 请根据上下文信息给出准确、简洁的答案。如果上下文中没有相关信息，请明确说明。
 IMPORTANT: 返回纯文本结果，不要使用任何 Markdown 格式（如 #, ##, **, 等符号）。"""
 
-        # 7. 调用 LLM 生成答案
+        # 8. 调用 LLM 生成答案
         try:
             response = llm_client.chat.completions.create(
                 model=anthropic_model,
@@ -313,13 +330,21 @@ IMPORTANT: 返回纯文本结果，不要使用任何 Markdown 格式（如 #, #
                 stream=False
             )
 
-            # 8. 提取答案
+            # 9. 提取答案
+            if not response.choices or not response.choices[0].message or not response.choices[0].message.content:
+                raise HTTPException(
+                    status_code=500,
+                    detail="LLM response is empty or malformed"
+                )
+
             answer = response.choices[0].message.content
 
             return {
                 "question": question,
                 "answer": answer,
-                "model": anthropic_model
+                "model": anthropic_model,
+                "results_count": len(results['documents'][0]),
+                "query_used": True
             }
 
         except Exception as llm_error:
